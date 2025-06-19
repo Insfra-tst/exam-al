@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Comparison Tool - Zeyvior</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        :root {
+            --border-color: #e2e8f0;
+            --primary-color: #3b82f6;
+            --secondary-color: #10b981;
+            --text-color: #1f2937;
+            --grid-color: #f1f5f9;
+            --winner-color: #10b981;
+            --header-bg: #f8fafc;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+            line-height: 1.7;
+            color: var(--text-color);
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Navigation Bar Styles */
+        .navbar {
+            background-color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-logo {
+            height: 40px;
+            width: auto;
+        }
+
+        .nav-logo-link:focus {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 2px;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-button {
+            background: linear-gradient(90deg, var(--primary-color) 60%, var(--secondary-color) 100%);
+            color: #fff;
+            padding: 0.6rem 1.4rem;
+            border-radius: 999px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1rem;
+            box-shadow: 0 2px 8px rgba(37,99,235,0.08);
+            border: none;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+            display: inline-block;
+            cursor: pointer;
+        }
+
+        .nav-button:focus {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 2px;
+        }
+
+        .nav-button:hover, .nav-button:active {
+            background: linear-gradient(90deg, var(--secondary-color) 60%, var(--primary-color) 100%);
+            box-shadow: 0 4px 16px rgba(30,64,175,0.12);
+            transform: translateY(-2px) scale(1.03);
+        }
+
+        .footer {
+            margin-top: 3rem;
+            padding: 2rem 0 1rem 0;
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+        }
+
+        .footer-links {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .footer-links a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1rem;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--secondary-color);
+        }
+
+        .footer-copyright {
+            color: #64748b;
+            font-size: 0.95rem;
+        }
+
+        @media (max-width: 640px) {
+            .navbar {
+                padding: 1rem;
+            }
+            
+            .nav-container {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            .nav-buttons {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-logo-link"><img src="{{ url_for('static', filename='images/zeyvior-logo.png') }}" alt="Zeyvior Logo" class="nav-logo"></a>
+            <div class="nav-buttons">
+                <a href="/" class="nav-button nav-similar">Similar Comparison</a>
+                <a href="https://ai-analyzer.zeyvior.com/" class="nav-button nav-personalize" target="_blank" rel="noopener">Personalize Comparisons</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>AI Comparison Tool</h1>
+        <p>Generate detailed comparisons between different methods and categories using AI analysis.</p>
+        
+        <form method="POST" action="/generate">
+            <div class="form-group">
+                <label for="category">Category:</label>
+                <input type="text" id="category" name="category" required placeholder="e.g., Business Models, Marketing Strategies">
+            </div>
+            
+            <div class="form-group">
+                <label for="method1">Method 1:</label>
+                <input type="text" id="method1" name="method1" required placeholder="e.g., Affiliate Marketing">
+            </div>
+            
+            <div class="form-group">
+                <label for="method2">Method 2:</label>
+                <input type="text" id="method2" name="method2" required placeholder="e.g., Print on Demand">
+            </div>
+            
+            <button type="submit" class="btn">Generate Comparison</button>
+        </form>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="/privacy-policy">Privacy Policy</a>
+            <a href="/terms-and-conditions">Terms and Conditions</a>
+            <a href="/refund-policy">Refund Policy</a>
+            <a href="/about-us">About Us</a>
+            <a href="/contact-us">Contact Us</a>
+        </div>
+        <div class="footer-copyright">© 2025 Zeyvior. All rights reserved.</div>
+    </footer>
+</body>
+</html> 

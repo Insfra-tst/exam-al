@@ -49,6 +49,7 @@ Thumbs.db
 # Output files
 output/
 *.html
+!templates/*.html
 
 # Temporary files
 *.tmp
