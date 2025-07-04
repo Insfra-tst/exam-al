@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "name": "exam-ai-frontend",
   "builds": [
     {
       "src": "public/**/*",
@@ -8,24 +9,88 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "https://exam-analyzer-api.onrender.com/api/$1"
+      "src": "/",
+      "dest": "/public/index.html"
     },
     {
-      "src": "/auth/(.*)",
-      "dest": "https://exam-analyzer-api.onrender.com/auth/$1"
+      "src": "/auth",
+      "dest": "/public/auth.html"
     },
     {
-      "src": "/payment/(.*)",
-      "dest": "https://exam-analyzer-api.onrender.com/payment/$1"
+      "src": "/dashboard",
+      "dest": "/public/dashboard.html"
     },
     {
-      "src": "/tokens/(.*)",
-      "dest": "https://exam-analyzer-api.onrender.com/tokens/$1"
+      "src": "/onboarding",
+      "dest": "/public/onboarding.html"
     },
     {
-      "src": "/health",
-      "dest": "https://exam-analyzer-api.onrender.com/health"
+      "src": "/subjects",
+      "dest": "/public/subjects.html"
+    },
+    {
+      "src": "/analysis",
+      "dest": "/public/analysis.html"
+    },
+    {
+      "src": "/results",
+      "dest": "/public/results.html"
+    },
+    {
+      "src": "/topics",
+      "dest": "/public/topics.html"
+    },
+    {
+      "src": "/settings",
+      "dest": "/public/settings.html"
+    },
+    {
+      "src": "/heatmap",
+      "dest": "/public/heatmap.html"
+    },
+    {
+      "src": "/visual-analyzer",
+      "dest": "/public/visual-analyzer.html"
+    },
+    {
+      "src": "/question-predictor",
+      "dest": "/public/question-predictor.html"
+    },
+    {
+      "src": "/question-types",
+      "dest": "/public/question-types.html"
+    },
+    {
+      "src": "/topic-analysis",
+      "dest": "/public/topic-analysis.html"
+    },
+    {
+      "src": "/short-notes",
+      "dest": "/public/short-notes.html"
+    },
+    {
+      "src": "/easy-ways-to-learn",
+      "dest": "/public/easy-ways-to-learn.html"
+    },
+    {
+      "src": "/example-questions",
+      "dest": "/public/example-questions.html"
+    },
+    {
+      "src": "/advanced-question",
+      "dest": "/public/advanced-question.html"
+    },
+    {
+      "src": "/js/(.*)",
+      "dest": "/public/js/$1"
+    },
+    {
+      "src": "/css/(.*)",
+      "dest": "/public/css/$1"
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot))",
+      "dest": "/public/$1"
     },
     {
       "src": "/(.*)",
@@ -34,21 +99,38 @@
   ],
   "headers": [
     {
-      "source": "/api/(.*)",
+      "source": "/(.*)",
       "headers": [
         {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
         },
         {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, PUT, DELETE, OPTIONS"
+          "key": "X-Frame-Options",
+          "value": "DENY"
         },
         {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization"
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    },
+    {
+      "source": "/public/(.*\\.(js|css))",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     }
-  ]
+  ],
+  "functions": {},
+  "env": {
+    "API_BASE_URL": "https://exam-ai-backend.onrender.com"
+  }
 } 
