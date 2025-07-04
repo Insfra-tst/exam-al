@@ -37,6 +37,8 @@ app.use(cors({
         'https://elaraix.com',
         'https://www.elaraix.com',
         'https://exam-analyzer.vercel.app',
+        'https://exam-ai-frontend-blush.vercel.app',
+        'https://exam-ai-frontend-rf52.vercel.app',
         'http://localhost:3000',
         'http://localhost:3001'
     ],
