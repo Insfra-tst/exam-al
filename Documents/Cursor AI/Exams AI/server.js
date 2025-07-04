@@ -1,27 +1,53 @@
-// Load production environment configuration
-require('./env-production');
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+
+// Import modules
+const database = require('./database');
+const TokenManager = require('./token-manager');
+const PaymentProcessor = require('./payment-processor');
+
+// Import routes
+const authRoutes = require('./auth-routes');
+const paymentRoutes = require('./payment-routes');
 
 const app = express();
 
-// Shared hosting configuration
+// Render.com configuration
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
 
-// CORS for shared hosting
+// Security middleware
+app.use(helmet());
+app.use(compression());
+
+// Rate limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.'
+});
+app.use(limiter);
+
+// CORS configuration for Render.com
 app.use(cors({
-    origin: true,
-    credentials: true
+    origin: [
+        'https://elaraix.com',
+        'https://www.elaraix.com',
+        'https://exam-analyzer.vercel.app',
+        'http://localhost:3000',
+        'http://localhost:3001'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -30,33 +56,144 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         environment: process.env.NODE_ENV || 'production',
         version: '1.0.0',
-        database: process.env.DB_NAME
+        database: process.env.DB_NAME,
+        platform: 'Render.com'
     });
 });
 
-// Serve main pages
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/index.html'));
+// API routes
+app.use('/auth', authRoutes);
+app.use('/payment', paymentRoutes);
+
+// Token balance endpoint
+app.get('/tokens/balance', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+
+        const auth = require('./auth');
+        const decoded = auth.verifyToken(token);
+        if (!decoded || !decoded.userId) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        const tokenManager = new TokenManager(database);
+        const userTokens = await tokenManager.getUserTokens(decoded.userId);
+        res.json({
+            success: true,
+            tokens: userTokens
+        });
+    } catch (error) {
+        console.error('Error getting token balance:', error);
+        res.status(500).json({ error: 'Failed to get token balance' });
+    }
 });
 
-app.get('/auth.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/auth.html'));
+// Token history endpoint
+app.get('/tokens/history', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+
+        const auth = require('./auth');
+        const decoded = auth.verifyToken(token);
+        if (!decoded || !decoded.userId) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        const tokenManager = new TokenManager(database);
+        const history = await tokenManager.getTokenUsageHistory(decoded.userId);
+        res.json({
+            success: true,
+            history: history
+        });
+    } catch (error) {
+        console.error('Error getting token history:', error);
+        res.status(500).json({ error: 'Failed to get token history' });
+    }
 });
 
-app.get('/dashboard.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/dashboard.html'));
-});
+// OpenAI analysis endpoint
+app.post('/api/analyze', async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        
+        if (!token) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
 
-app.get('/onboarding.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/onboarding.html'));
-});
+        const auth = require('./auth');
+        const decoded = auth.verifyToken(token);
+        if (!decoded || !decoded.userId) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
 
-app.get('/subjects.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/subjects.html'));
-});
+        const { examData, analysisType } = req.body;
 
-app.get('/visual-analyzer.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public/visual-analyzer.html'));
+        if (!examData || !analysisType) {
+            return res.status(400).json({ error: 'Exam data and analysis type are required' });
+        }
+
+        // Check token balance
+        const tokenManager = new TokenManager(database);
+        const userTokens = await tokenManager.getUserTokens(decoded.userId);
+        
+        const tokenCost = process.env[`TOKEN_COST_${analysisType.toUpperCase()}`] || 20;
+        
+        if (userTokens.tokens_available < tokenCost) {
+            return res.status(402).json({ error: 'Insufficient tokens' });
+        }
+
+        // Use tokens
+        await tokenManager.useTokens(
+            decoded.userId,
+            tokenCost,
+            analysisType,
+            `Analysis: ${analysisType}`,
+            examData.examType,
+            examData.subject,
+            examData.topic
+        );
+
+        // Perform OpenAI analysis
+        const { OpenAI } = require('openai');
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY
+        });
+
+        const prompt = `Analyze this exam data for ${analysisType}:
+        Exam Type: ${examData.examType}
+        Subject: ${examData.subject}
+        Topic: ${examData.topic}
+        Questions: ${examData.questions}
+        
+        Provide detailed analysis and insights.`;
+
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 1000
+        });
+
+        const analysis = completion.choices[0].message.content;
+
+        res.json({
+            success: true,
+            analysis,
+            tokensUsed: tokenCost,
+            remainingTokens: userTokens.tokens_available - tokenCost
+        });
+
+    } catch (error) {
+        console.error('Analysis error:', error);
+        res.status(500).json({ error: 'Analysis failed' });
+    }
 });
 
 // Error handling middleware
@@ -74,20 +211,34 @@ app.use('*', (req, res) => {
     res.status(404).json({ error: 'Endpoint not found' });
 });
 
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('🛑 SIGTERM received, shutting down gracefully...');
+    database.closeConnections();
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('🛑 SIGINT received, shutting down gracefully...');
+    database.closeConnections();
+    process.exit(0);
+});
+
 // Start server
 async function startServer() {
     try {
-        console.log('🚀 Starting Exam Pattern Analyzer...');
-        console.log('📊 Database:', process.env.DB_NAME);
-        console.log('🌐 Base URL:', process.env.BASE_URL);
+        // Initialize database
+        await database.initialize();
+        console.log('✅ Database initialized successfully');
         
-        app.listen(PORT, HOST, () => {
-            console.log('🚀 Server running on', HOST + ':' + PORT);
+        // Start server
+        app.listen(PORT, () => {
+            console.log('🚀 Render.com API server running on port', PORT);
             console.log('🌍 Environment:', process.env.NODE_ENV || 'production');
-            console.log('🔐 CORS enabled for all origins');
-            console.log('📁 Static files served from public directory');
+            console.log('🔐 CORS enabled for Vercel frontend');
             console.log('🌐 Health check available at /health');
-            console.log('�� Frontend available at /');
+            console.log('📊 Database:', process.env.DB_NAME);
+            console.log('🤖 OpenAI API configured');
         });
     } catch (error) {
         console.error('❌ Failed to start server:', error);
@@ -95,4 +246,4 @@ async function startServer() {
     }
 }
 
-startServer();
+startServer(); 
