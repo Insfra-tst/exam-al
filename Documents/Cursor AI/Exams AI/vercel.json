@@ -7,94 +7,83 @@
       "use": "@vercel/static"
     }
   ],
+  "outputDirectory": "public",
   "routes": [
     {
       "src": "/",
-      "dest": "/public/index.html"
+      "dest": "/index.html"
     },
     {
       "src": "/auth",
-      "dest": "/public/auth.html"
+      "dest": "/auth.html"
     },
     {
       "src": "/dashboard",
-      "dest": "/public/dashboard.html"
+      "dest": "/dashboard.html"
     },
     {
       "src": "/onboarding",
-      "dest": "/public/onboarding.html"
+      "dest": "/onboarding.html"
     },
     {
       "src": "/subjects",
-      "dest": "/public/subjects.html"
+      "dest": "/subjects.html"
     },
     {
       "src": "/analysis",
-      "dest": "/public/analysis.html"
+      "dest": "/analysis.html"
     },
     {
       "src": "/results",
-      "dest": "/public/results.html"
+      "dest": "/results.html"
     },
     {
       "src": "/topics",
-      "dest": "/public/topics.html"
+      "dest": "/topics.html"
     },
     {
       "src": "/settings",
-      "dest": "/public/settings.html"
+      "dest": "/settings.html"
     },
     {
       "src": "/heatmap",
-      "dest": "/public/heatmap.html"
+      "dest": "/heatmap.html"
     },
     {
       "src": "/visual-analyzer",
-      "dest": "/public/visual-analyzer.html"
+      "dest": "/visual-analyzer.html"
     },
     {
       "src": "/question-predictor",
-      "dest": "/public/question-predictor.html"
+      "dest": "/question-predictor.html"
     },
     {
       "src": "/question-types",
-      "dest": "/public/question-types.html"
+      "dest": "/question-types.html"
     },
     {
       "src": "/topic-analysis",
-      "dest": "/public/topic-analysis.html"
+      "dest": "/topic-analysis.html"
     },
     {
       "src": "/short-notes",
-      "dest": "/public/short-notes.html"
+      "dest": "/short-notes.html"
     },
     {
       "src": "/easy-ways-to-learn",
-      "dest": "/public/easy-ways-to-learn.html"
+      "dest": "/easy-ways-to-learn.html"
     },
     {
       "src": "/example-questions",
-      "dest": "/public/example-questions.html"
+      "dest": "/example-questions.html"
     },
     {
       "src": "/advanced-question",
-      "dest": "/public/advanced-question.html"
-    },
-    {
-      "src": "/js/(.*)",
-      "dest": "/public/js/$1"
-    },
-    {
-      "src": "/css/(.*)",
-      "dest": "/public/css/$1"
-    },
-    {
-      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot))",
-      "dest": "/public/$1"
+      "dest": "/advanced-question.html"
     },
     {
       "src": "/(.*)",
-      "dest": "/public/$1"
+      "dest": "/$1"
     }
   ],
   "headers": [
@@ -120,7 +109,7 @@
       ]
     },
     {
-      "source": "/public/(.*\\.(js|css))",
+      "source": "/(.*\\.(js|css))",
       "headers": [
         {
           "key": "Cache-Control",
