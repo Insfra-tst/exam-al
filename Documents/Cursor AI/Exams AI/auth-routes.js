@@ -4,10 +4,12 @@ const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const FacebookStrategy = require('passport-facebook').Strategy;
-const auth = require('./auth-mysql');
-const onboarding = require('./onboarding');
 const tokenManager = require('./token-manager');
 const OpenAI = require('openai');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
+const database = require('./database-mongo');
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -15,6 +17,47 @@ const openai = new OpenAI({
 });
 
 const router = express.Router();
+
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Helper function to generate JWT token
+const generateToken = (userId) => {
+    return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '24h' });
+};
+
+// Helper function to verify JWT token
+const verifyToken = (token) => {
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+        return null;
+    }
+};
+
+// Middleware to authenticate requests
+const authenticateToken = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Access token required' });
+    }
+
+    const decoded = verifyToken(token);
+    if (!decoded) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    // Verify user exists
+    const user = await database.userOperations.findUserById(decoded.userId);
+    if (!user) {
+        return res.status(401).json({ error: 'User not found' });
+    }
+
+    req.user = user;
+    next();
+};
 
 // Token checking middleware
 const requireTokens = (actionType) => {
@@ -48,12 +91,12 @@ passport.use(new LocalStrategy({
     passwordField: 'password'
 }, async (email, password, done) => {
     try {
-        const user = await auth.findUserByEmail(email);
+        const user = await database.userOperations.findUserByEmail(email);
         if (!user) {
             return done(null, false, { message: 'Invalid email or password' });
         }
 
-        const isValidPassword = await auth.comparePassword(password, user.password);
+        const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
             return done(null, false, { message: 'Invalid email or password' });
         }
@@ -72,11 +115,11 @@ passport.use(new GoogleStrategy({
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         const email = profile.emails[0].value;
-        let user = await auth.findUserByEmail(email);
+        let user = await database.userOperations.findUserByEmail(email);
 
         if (!user) {
             // Create new user from Google profile
-            user = await auth.createUser({
+            user = await database.userOperations.createUser({
                 email,
                 name: profile.displayName,
                 provider: 'google'
@@ -98,11 +141,11 @@ passport.use(new FacebookStrategy({
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         const email = profile.emails[0].value;
-        let user = auth.findUserByEmail(email);
+        let user = await database.userOperations.findUserByEmail(email);
 
         if (!user) {
             // Create new user from Facebook profile
-            user = await auth.createUser({
+            user = await database.userOperations.createUser({
                 email,
                 name: profile.displayName,
                 provider: 'facebook'
@@ -121,83 +164,381 @@ passport.serializeUser((user, done) => {
 
 passport.deserializeUser(async (id, done) => {
     try {
-        const user = await auth.findUserById(id);
+        const user = await database.userOperations.findUserById(id);
         done(null, user);
     } catch (error) {
         done(error);
     }
 });
 
-// Local signup
+// Register endpoint
 router.post('/signup', async (req, res) => {
     try {
         const { email, password, name } = req.body;
-
         if (!email || !password || !name) {
-            return res.status(400).json({ error: 'All fields are required' });
+            return res.status(400).json({ error: 'Email, password, and name are required' });
         }
-
         if (password.length < 6) {
-            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+            return res.status(400).json({ error: 'Password must be at least 6 characters long' });
         }
-
-        // Basic email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            return res.status(400).json({ error: 'Please enter a valid email address' });
-        }
-
-        const user = await auth.createUser({ email, password, name });
-        const token = auth.generateToken(user.id);
-
-        const message = user.verified 
-            ? 'User created successfully!' 
-            : 'User created successfully! Email verification is optional.';
-
-        res.json({
-            message: message,
-            token,
+        // Create user
+        const user = await database.userOperations.createUser({ email, password, name });
+        // Generate token
+        const token = generateToken(user.id);
+        res.status(201).json({
+            success: true,
+            message: 'User registered successfully',
             user: {
                 id: user.id,
                 email: user.email,
                 name: user.name,
-                verified: user.verified,
+                verified: true,
                 onboardingCompleted: user.onboardingCompleted
-            }
+            },
+            token
         });
     } catch (error) {
-        console.error('Signup error:', error);
         if (error.message === 'User already exists') {
-            return res.status(400).json({ error: 'User already exists' });
+            return res.status(409).json({ error: 'User with this email already exists' });
         }
-        res.status(500).json({ error: 'Server error during signup' });
+        res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// Local login
-router.post('/login', (req, res, next) => {
-    passport.authenticate('local', (err, user, info) => {
-        if (err) {
-            return res.status(500).json({ error: 'Server error' });
+// Login endpoint
+router.post('/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
         }
+        // Find user
+        const user = await database.userOperations.findUserByEmail(email);
         if (!user) {
-            return res.status(401).json({ error: info.message });
+            return res.status(401).json({ error: 'Invalid email or password' });
         }
-
-        const token = auth.generateToken(user.id);
+        // Verify password
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        // Generate token
+        const token = generateToken(user.id);
         res.json({
+            success: true,
             message: 'Login successful',
-            token,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                verified: true,
+                onboardingCompleted: user.onboardingCompleted,
+                examData: user.examData
+            },
+            token
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Get user profile
+router.get('/profile', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        
+        res.json({
+            success: true,
             user: {
                 id: user.id,
                 email: user.email,
                 name: user.name,
                 verified: user.verified,
                 onboardingCompleted: user.onboardingCompleted,
-                examData: user.examData
+                examData: user.examData,
+                createdAt: user.createdAt
             }
         });
-    })(req, res, next);
+
+    } catch (error) {
+        console.error('Profile error:', error);
+        res.status(500).json({ error: 'Failed to get profile' });
+    }
+});
+
+// Update user profile
+router.put('/profile', authenticateToken, async (req, res) => {
+    try {
+        const { name, email } = req.body;
+        const userId = req.user.id;
+
+        // Update user
+        const updatedUser = await database.User.findOneAndUpdate(
+            { id: userId },
+            {
+                name: name || req.user.name,
+                email: email || req.user.email,
+                updatedAt: new Date()
+            },
+            { new: true }
+        );
+
+        res.json({
+            success: true,
+            message: 'Profile updated successfully',
+            user: {
+                id: updatedUser.id,
+                email: updatedUser.email,
+                name: updatedUser.name,
+                verified: updatedUser.verified,
+                onboardingCompleted: updatedUser.onboardingCompleted
+            }
+        });
+
+    } catch (error) {
+        console.error('Profile update error:', error);
+        res.status(500).json({ error: 'Failed to update profile' });
+    }
+});
+
+// Update onboarding
+router.post('/onboarding', authenticateToken, async (req, res) => {
+    try {
+        const { examData } = req.body;
+        const userId = req.user.id;
+
+        if (!examData) {
+            return res.status(400).json({ error: 'Exam data is required' });
+        }
+
+        // Update user onboarding
+        const updatedUser = await database.userOperations.updateUserOnboarding(userId, examData);
+
+        res.json({
+            success: true,
+            message: 'Onboarding completed successfully',
+            user: {
+                id: updatedUser.id,
+                email: updatedUser.email,
+                name: updatedUser.name,
+                verified: updatedUser.verified,
+                onboardingCompleted: updatedUser.onboardingCompleted,
+                examData: updatedUser.examData
+            }
+        });
+
+    } catch (error) {
+        console.error('Onboarding error:', error);
+        res.status(500).json({ error: 'Failed to complete onboarding' });
+    }
+});
+
+// Get user subjects
+router.get('/subjects', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const subjects = await database.subjectOperations.getUserSubjects(userId);
+
+        res.json({
+            success: true,
+            subjects
+        });
+
+    } catch (error) {
+        console.error('Get subjects error:', error);
+        res.status(500).json({ error: 'Failed to get subjects' });
+    }
+});
+
+// Add user subject
+router.post('/subjects', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { name, type } = req.body;
+
+        if (!name) {
+            return res.status(400).json({ error: 'Subject name is required' });
+        }
+
+        const subject = await database.subjectOperations.addUserSubject(userId, {
+            name,
+            type: type || 'optional'
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Subject added successfully',
+            subject
+        });
+
+    } catch (error) {
+        console.error('Add subject error:', error);
+        res.status(500).json({ error: 'Failed to add subject' });
+    }
+});
+
+// Update user subject
+router.put('/subjects/:subjectId', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { subjectId } = req.params;
+        const { name, type } = req.body;
+
+        if (!name) {
+            return res.status(400).json({ error: 'Subject name is required' });
+        }
+
+        const subject = await database.subjectOperations.updateUserSubject(userId, subjectId, {
+            name,
+            type: type || 'optional'
+        });
+
+        if (!subject) {
+            return res.status(404).json({ error: 'Subject not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Subject updated successfully',
+            subject
+        });
+
+    } catch (error) {
+        console.error('Update subject error:', error);
+        res.status(500).json({ error: 'Failed to update subject' });
+    }
+});
+
+// Delete user subject
+router.delete('/subjects/:subjectId', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { subjectId } = req.params;
+
+        const subject = await database.subjectOperations.deleteUserSubject(userId, subjectId);
+
+        if (!subject) {
+            return res.status(404).json({ error: 'Subject not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Subject deleted successfully'
+        });
+
+    } catch (error) {
+        console.error('Delete subject error:', error);
+        res.status(500).json({ error: 'Failed to delete subject' });
+    }
+});
+
+// Logout endpoint (client-side token removal)
+router.post('/logout', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Logged out successfully'
+    });
+});
+
+// Verify email endpoint
+router.get('/verify/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+
+        const user = await database.userOperations.verifyEmail(token);
+
+        res.json({
+            success: true,
+            message: 'Email verified successfully',
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                verified: user.verified
+            }
+        });
+
+    } catch (error) {
+        console.error('Email verification error:', error);
+        res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+});
+
+// Request password reset
+router.post('/reset-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+
+        const user = await database.userOperations.findUserByEmail(email);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Generate reset token
+        const resetToken = uuidv4();
+        await database.userOperations.createVerificationToken(email, resetToken);
+
+        // TODO: Send email with reset link
+        // For now, just return success
+        res.json({
+            success: true,
+            message: 'Password reset email sent'
+        });
+
+    } catch (error) {
+        console.error('Password reset error:', error);
+        res.status(500).json({ error: 'Failed to send reset email' });
+    }
+});
+
+// Reset password with token
+router.post('/reset-password/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const { password } = req.body;
+
+        if (!password || password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
+
+        // Verify token
+        const verificationToken = await database.VerificationToken.findOne({
+            token,
+            expiresAt: { $gt: new Date() }
+        });
+
+        if (!verificationToken) {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        // Update user password
+        await database.User.findOneAndUpdate(
+            { email: verificationToken.email },
+            {
+                password: hashedPassword,
+                updatedAt: new Date()
+            }
+        );
+
+        // Delete reset token
+        await database.VerificationToken.deleteOne({ token });
+
+        res.json({
+            success: true,
+            message: 'Password reset successfully'
+        });
+
+    } catch (error) {
+        console.error('Password reset error:', error);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
 });
 
 // Google OAuth routes
@@ -461,11 +802,11 @@ router.post('/onboarding/get-all-subjects', async (req, res) => {
 });
 
 // Update user subjects
-router.post('/update-user-subjects', auth.authenticateToken, async (req, res) => {
+router.post('/update-user-subjects', authenticateToken, async (req, res) => {
     try {
         const { selectedOptionalSubjects } = req.body;
         
-        const user = auth.findUserById(req.user.id);
+        const user = req.user;
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -476,7 +817,7 @@ router.post('/update-user-subjects', auth.authenticateToken, async (req, res) =>
             user.updatedAt = new Date();
             
             // Save updated user data
-            auth.updateUserOnboarding(user.id, user.examData);
+            await database.userOperations.updateUserOnboarding(user.id, user.examData);
         }
 
         res.json({ 
@@ -491,7 +832,7 @@ router.post('/update-user-subjects', auth.authenticateToken, async (req, res) =>
 });
 
 // Complete onboarding
-router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => {
+router.post('/onboarding/complete', authenticateToken, async (req, res) => {
     try {
         const { examName, gradeLevel, stream, selectedOptionalSubjects } = req.body;
         
@@ -503,7 +844,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
         const subjectsData = await onboarding.getComprehensiveSubjectsForReview(examName, gradeLevel, stream);
         
         // Update user with exam data
-        const user = auth.findUserById(req.user.id);
+        const user = req.user;
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -519,7 +860,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
         };
 
         // Save user data using the correct function
-        auth.updateUserOnboarding(user.id, user.examData);
+        await database.userOperations.updateUserOnboarding(user.id, user.examData);
 
         res.json({ 
             success: true, 
@@ -533,7 +874,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
 });
 
 // Complete onboarding with exam data
-router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => {
+router.post('/onboarding/complete', authenticateToken, async (req, res) => {
     try {
         const { examName, gradeLevel, stream, subjects, examInfo, officialName } = req.body;
         
@@ -542,7 +883,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
         }
 
         // Update user with exam data
-        const user = auth.findUserById(req.user.id);
+        const user = req.user;
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -559,7 +900,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
         };
 
         // Save user data using the correct function
-        auth.updateUserOnboarding(user.id, user.examData);
+        await database.userOperations.updateUserOnboarding(user.id, user.examData);
 
         res.json({ 
             success: true, 
@@ -573,7 +914,7 @@ router.post('/onboarding/complete', auth.authenticateToken, async (req, res) => 
 });
 
 // Get current user
-router.get('/me', auth.authenticateToken, (req, res) => {
+router.get('/me', authenticateToken, (req, res) => {
     res.json({
         user: {
             id: req.user.id,
@@ -587,7 +928,7 @@ router.get('/me', auth.authenticateToken, (req, res) => {
 });
 
 // Get user info (alias for /me)
-router.get('/user', auth.authenticateToken, (req, res) => {
+router.get('/user', authenticateToken, (req, res) => {
     res.json({
         user: {
             id: req.user.id,
@@ -601,9 +942,9 @@ router.get('/user', auth.authenticateToken, (req, res) => {
 });
 
 // Get user subjects
-router.get('/subjects', auth.authenticateToken, (req, res) => {
+router.get('/subjects', authenticateToken, (req, res) => {
     try {
-        const subjects = auth.getUserSubjects(req.user.id);
+        const subjects = req.user.subjects;
         res.json({ subjects: subjects || [] });
     } catch (error) {
         console.error('Error getting user subjects:', error);
@@ -612,7 +953,7 @@ router.get('/subjects', auth.authenticateToken, (req, res) => {
 });
 
 // Add subject
-router.post('/subjects', auth.authenticateToken, async (req, res) => {
+router.post('/subjects', authenticateToken, async (req, res) => {
     try {
         const { name, type } = req.body;
         
@@ -624,7 +965,7 @@ router.post('/subjects', auth.authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Subject type must be mandatory or optional' });
         }
 
-        const subject = auth.addUserSubject(req.user.id, { name, type });
+        const subject = await database.subjectOperations.addUserSubject(req.user.id, { name, type });
         res.json({ subject });
     } catch (error) {
         res.status(500).json({ error: 'Failed to add subject' });
@@ -632,7 +973,7 @@ router.post('/subjects', auth.authenticateToken, async (req, res) => {
 });
 
 // Update subject
-router.put('/subjects/:subjectId', auth.authenticateToken, (req, res) => {
+router.put('/subjects/:subjectId', authenticateToken, (req, res) => {
     try {
         const { subjectId } = req.params;
         const { name, type } = req.body;
@@ -645,7 +986,7 @@ router.put('/subjects/:subjectId', auth.authenticateToken, (req, res) => {
             return res.status(400).json({ error: 'Subject type must be mandatory or optional' });
         }
 
-        const subject = auth.updateUserSubject(req.user.id, subjectId, { name, type });
+        const subject = database.subjectOperations.updateUserSubject(req.user.id, subjectId, { name, type });
         res.json({ subject });
     } catch (error) {
         res.status(500).json({ error: 'Failed to update subject' });
@@ -653,10 +994,10 @@ router.put('/subjects/:subjectId', auth.authenticateToken, (req, res) => {
 });
 
 // Delete subject
-router.delete('/subjects/:subjectId', auth.authenticateToken, (req, res) => {
+router.delete('/subjects/:subjectId', authenticateToken, (req, res) => {
     try {
         const { subjectId } = req.params;
-        auth.deleteUserSubject(req.user.id, subjectId);
+        database.subjectOperations.deleteUserSubject(req.user.id, subjectId);
         res.json({ message: 'Subject deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to delete subject' });
@@ -664,7 +1005,7 @@ router.delete('/subjects/:subjectId', auth.authenticateToken, (req, res) => {
 });
 
 // Generate subject analysis
-router.post('/generate-subject-analysis', auth.authenticateToken, requireTokens('subjectAnalysis'), async (req, res) => {
+router.post('/generate-subject-analysis', authenticateToken, requireTokens('subjectAnalysis'), async (req, res) => {
     try {
         const { subjectName, examName, gradeLevel } = req.body;
         
@@ -693,9 +1034,9 @@ router.post('/generate-subject-analysis', auth.authenticateToken, requireTokens(
 });
 
 // Get all available subjects for the user's exam
-router.get('/all-available-subjects', auth.authenticateToken, async (req, res) => {
+router.get('/all-available-subjects', authenticateToken, async (req, res) => {
     try {
-        const user = auth.findUserById(req.user.id);
+        const user = req.user;
         if (!user || !user.examData) {
             return res.status(400).json({ error: 'User exam data not found. Please complete onboarding first.' });
         }
@@ -715,7 +1056,7 @@ router.get('/all-available-subjects', auth.authenticateToken, async (req, res) =
 });
 
 // Route to redirect to heatmap with subject data
-router.get('/heatmap/:subject', auth.authenticateToken, async (req, res) => {
+router.get('/heatmap/:subject', authenticateToken, async (req, res) => {
     try {
         const { subject } = req.params;
         const { examName, gradeLevel, stream } = req.query;
@@ -740,13 +1081,8 @@ router.get('/heatmap/:subject', auth.authenticateToken, async (req, res) => {
     }
 });
 
-// Logout
-router.post('/logout', (req, res) => {
-    res.json({ message: 'Logged out successfully' });
-});
-
 // New endpoint for OpenAI exam validation
-router.post('/onboarding/validate-exam-openai', auth.authenticateToken, requireTokens('examValidation'), async (req, res) => {
+router.post('/onboarding/validate-exam-openai', authenticateToken, requireTokens('examValidation'), async (req, res) => {
     try {
         const { examName, gradeLevel, stream } = req.body;
         

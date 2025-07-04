@@ -1,43 +1,26 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const { v4: uuidv4 } = require('uuid');
+const database = require('./database-mongo');
 
-// In-memory user storage (replace with database in production)
-const users = new Map();
-const verificationTokens = new Map();
+// Export verificationTokens for external access (disabled)
+module.exports.verificationTokens = new Map();
 
-// Export verificationTokens for external access
-module.exports.verificationTokens = verificationTokens;
-
-// Email transporter
+// Email functions disabled
 const createTransporter = () => {
-    // Skip email configuration if not set
-    if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        console.log('⚠️  Email configuration not found, skipping email setup');
-        return null;
-    }
-    
-    return nodemailer.createTransport({
-        host: process.env.EMAIL_HOST,
-        port: process.env.EMAIL_PORT || 587,
-        secure: false,
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS
-        }
-    });
+    console.log('⚠️  Email functions disabled');
+    return null;
 };
 
 // Generate JWT token
 const generateToken = (userId) => {
-    return jwt.sign({ userId }, process.env.JWT_SECRET || 'default_jwt_secret_change_in_production', { expiresIn: '7d' });
+    return jwt.sign({ userId }, process.env.JWT_SECRET || 'default_jwt_secret', { expiresIn: '7d' });
 };
 
 // Verify JWT token
 const verifyToken = (token) => {
     try {
-        return jwt.verify(token, process.env.JWT_SECRET || 'default_jwt_secret_change_in_production');
+        return jwt.verify(token, process.env.JWT_SECRET || 'default_jwt_secret');
     } catch (error) {
         return null;
     }
@@ -53,221 +36,106 @@ const comparePassword = async (password, hashedPassword) => {
     return await bcrypt.compare(password, hashedPassword);
 };
 
-// Send verification email
+// Send verification email (disabled)
 const sendVerificationEmail = async (email, token) => {
-    // Skip email sending if email is not configured
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        console.log('⚠️  Email not configured, skipping verification email');
-        return true; // Return true to avoid blocking signup
-    }
-
-    const transporter = createTransporter();
-    if (!transporter) {
-        console.log('⚠️  Email transporter not available, skipping verification email');
-        return true; // Return true to avoid blocking signup
-    }
-
-    const verificationUrl = `${process.env.BASE_URL || 'http://localhost:3002'}/verify-email?token=${token}`;
-    
-    const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: 'Verify your email address',
-        html: `
-            <h2>Welcome to Exam Pattern Analyzer!</h2>
-            <p>Please click the link below to verify your email address:</p>
-            <a href="${verificationUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Email</a>
-            <p>If the button doesn't work, copy and paste this link: ${verificationUrl}</p>
-            <p>This link will expire in 24 hours.</p>
-        `
-    };
-
-    try {
-        await transporter.sendMail(mailOptions);
-        return true;
-    } catch (error) {
-        console.error('Email sending failed:', error);
-        return false; // Return false but don't block signup
-    }
+    console.log('⚠️  Email verification disabled');
+    return true; // Return true to avoid blocking signup
 };
 
-// Create user
+// Create user using MongoDB
 const createUser = async (userData) => {
     const { email, password, name, provider = 'local' } = userData;
     
-    // Check if user already exists
-    if (users.has(email)) {
-        throw new Error('User already exists');
-    }
-
-    const userId = uuidv4();
-    const hashedPassword = password ? await hashPassword(password) : null;
-    
-    const user = {
-        id: userId,
-        email,
-        name,
-        password: hashedPassword,
-        provider,
-        verified: provider !== 'local', // OAuth users are pre-verified
-        onboardingCompleted: false,
-        examData: null,
-        createdAt: new Date(),
-        updatedAt: new Date()
-    };
-
-    users.set(email, user);
-
-    // Send verification email for local signup (but don't block if it fails)
-    if (provider === 'local') {
-        const verificationToken = uuidv4();
-        verificationTokens.set(verificationToken, {
+    try {
+        const user = await database.userOperations.createUser({
             email,
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+            password,
+            name,
+            provider
         });
-        
-        try {
-            await sendVerificationEmail(email, verificationToken);
-        } catch (error) {
-            console.error('Failed to send verification email, but continuing with signup:', error);
+
+        // Email verification disabled - mark as verified
+        if (provider === 'local') {
+            await database.userOperations.updateUserVerification(user.id, true);
         }
+
+        return user;
+    } catch (error) {
+        throw error;
     }
-
-    return user;
 };
 
-// Find user by email
-const findUserByEmail = (email) => {
-    return users.get(email);
-};
-
-// Find user by ID
-const findUserById = (userId) => {
-    for (const user of users.values()) {
-        if (user.id === userId) {
-            return user;
-        }
+// Find user by email using MongoDB
+const findUserByEmail = async (email) => {
+    try {
+        return await database.userOperations.findUserByEmail(email);
+    } catch (error) {
+        console.error('Error finding user by email:', error);
+        return null;
     }
-    return null;
 };
 
-// Verify email
+// Find user by ID using MongoDB
+const findUserById = async (userId) => {
+    try {
+        return await database.userOperations.findUserById(userId);
+    } catch (error) {
+        console.error('Error finding user by ID:', error);
+        return null;
+    }
+};
+
+// Verify email (disabled)
 const verifyEmail = (token) => {
-    const verificationData = verificationTokens.get(token);
-    if (!verificationData) {
-        throw new Error('Invalid or expired verification token');
-    }
-
-    if (new Date() > verificationData.expiresAt) {
-        verificationTokens.delete(token);
-        throw new Error('Verification token has expired');
-    }
-
-    const user = findUserByEmail(verificationData.email);
-    if (!user) {
-        throw new Error('User not found');
-    }
-
-    user.verified = true;
-    user.updatedAt = new Date();
-    verificationTokens.delete(token);
-
-    return user;
+    console.log('⚠️  Email verification disabled');
+    throw new Error('Email verification is disabled');
 };
 
-// Update user onboarding data
-const updateUserOnboarding = (userId, examData) => {
-    const user = findUserById(userId);
-    if (!user) {
-        throw new Error('User not found');
+// Update user onboarding data using MongoDB
+const updateUserOnboarding = async (userId, examData) => {
+    try {
+        return await database.userOperations.updateUserOnboarding(userId, examData);
+    } catch (error) {
+        throw error;
     }
-
-    user.examData = examData;
-    user.onboardingCompleted = true;
-    user.updatedAt = new Date();
-
-    return user;
 };
 
-// Subject management
-const getUserSubjects = (userId) => {
-    const user = findUserById(userId);
-    if (!user) {
-        throw new Error('User not found');
+// Subject management using MongoDB
+const getUserSubjects = async (userId) => {
+    try {
+        const user = await database.userOperations.findUserById(userId);
+        return user.subjects || [];
+    } catch (error) {
+        throw error;
     }
-    return user.subjects || [];
 };
 
-const addUserSubject = (userId, subjectData) => {
-    const user = findUserById(userId);
-    if (!user) {
-        throw new Error('User not found');
+const addUserSubject = async (userId, subjectData) => {
+    try {
+        return await database.userOperations.addUserSubject(userId, subjectData);
+    } catch (error) {
+        throw error;
     }
-
-    if (!user.subjects) {
-        user.subjects = [];
-    }
-
-    const subject = {
-        id: uuidv4(),
-        name: subjectData.name,
-        type: subjectData.type,
-        createdAt: new Date()
-    };
-
-    user.subjects.push(subject);
-    user.updatedAt = new Date();
-
-    return subject;
 };
 
-const updateUserSubject = (userId, subjectId, subjectData) => {
-    const user = findUserById(userId);
-    if (!user) {
-        throw new Error('User not found');
+const updateUserSubject = async (userId, subjectId, subjectData) => {
+    try {
+        return await database.userOperations.updateUserSubject(userId, subjectId, subjectData);
+    } catch (error) {
+        throw error;
     }
-
-    if (!user.subjects) {
-        throw new Error('No subjects found');
-    }
-
-    const subjectIndex = user.subjects.findIndex(s => s.id === subjectId);
-    if (subjectIndex === -1) {
-        throw new Error('Subject not found');
-    }
-
-    user.subjects[subjectIndex] = {
-        ...user.subjects[subjectIndex],
-        name: subjectData.name,
-        type: subjectData.type,
-        updatedAt: new Date()
-    };
-
-    user.updatedAt = new Date();
-    return user.subjects[subjectIndex];
 };
 
-const deleteUserSubject = (userId, subjectId) => {
-    const user = findUserById(userId);
-    if (!user) {
-        throw new Error('User not found');
+const deleteUserSubject = async (userId, subjectId) => {
+    try {
+        return await database.userOperations.deleteUserSubject(userId, subjectId);
+    } catch (error) {
+        throw error;
     }
-
-    if (!user.subjects) {
-        throw new Error('No subjects found');
-    }
-
-    const subjectIndex = user.subjects.findIndex(s => s.id === subjectId);
-    if (subjectIndex === -1) {
-        throw new Error('Subject not found');
-    }
-
-    user.subjects.splice(subjectIndex, 1);
-    user.updatedAt = new Date();
 };
 
-// Authentication middleware
-const authenticateToken = (req, res, next) => {
+// Middleware to authenticate requests
+const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -277,37 +145,42 @@ const authenticateToken = (req, res, next) => {
 
     const decoded = verifyToken(token);
     if (!decoded) {
-        return res.status(403).json({ error: 'Invalid or expired token' });
+        return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
-    const user = findUserById(decoded.userId);
+    // Verify user exists
+    const user = await findUserById(decoded.userId);
     if (!user) {
-        return res.status(403).json({ error: 'User not found' });
+        return res.status(401).json({ error: 'User not found' });
     }
 
     req.user = user;
     next();
 };
 
-// Check if user is verified (now optional - just for tracking)
+// Middleware to require email verification (disabled)
 const requireVerification = (req, res, next) => {
-    // Allow access even if not verified, but track the status
-    next();
+    console.log('⚠️  Email verification requirement disabled');
+    next(); // Skip verification requirement
 };
 
-// Check if onboarding is completed
+// Middleware to require onboarding completion
 const requireOnboarding = (req, res, next) => {
     if (!req.user.onboardingCompleted) {
-        return res.status(403).json({ error: 'Onboarding required' });
+        return res.status(403).json({ error: 'Onboarding not completed' });
     }
     next();
 };
 
 module.exports = {
+    generateToken,
+    verifyToken,
+    hashPassword,
+    comparePassword,
+    sendVerificationEmail,
     createUser,
     findUserByEmail,
     findUserById,
-    getUserById: findUserById, // Alias for compatibility
     verifyEmail,
     updateUserOnboarding,
     getUserSubjects,
@@ -316,10 +189,5 @@ module.exports = {
     deleteUserSubject,
     authenticateToken,
     requireVerification,
-    requireOnboarding,
-    generateToken,
-    verifyToken,
-    comparePassword,
-    sendVerificationEmail,
-    verificationTokens
+    requireOnboarding
 }; 

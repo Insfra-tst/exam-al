@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
-const db = require('./database');
-const tokenManager = require('./token-manager');
+const database = require('./database-mongo');
+const TokenManager = require('./token-manager');
 
 class PaymentProcessor {
     constructor() {
@@ -167,19 +167,33 @@ class PaymentProcessor {
     // Log transaction
     async logTransaction(userId, transactionId, amount, tokensPurchased, status, metadata = {}) {
         try {
-            await db.execute(
-                'INSERT INTO payment_transactions (id, user_id, amount, tokens_purchased, payment_method, transaction_status, card_last4, card_brand) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [
-                    transactionId,
-                    userId,
-                    amount,
-                    tokensPurchased,
-                    'credit_card',
-                    status,
-                    metadata.card_last4 || null,
-                    metadata.card_brand || null
-                ]
-            );
+            // Create a new transaction document
+            const transaction = {
+                id: transactionId,
+                userId: userId,
+                amount: amount,
+                tokensPurchased: tokensPurchased,
+                paymentMethod: 'credit_card',
+                transactionStatus: status,
+                cardLast4: metadata.card_last4 || null,
+                cardBrand: metadata.card_brand || null,
+                createdAt: new Date()
+            };
+
+            // For now, we'll use the TokenUsage collection to log transactions
+            // You can create a separate PaymentTransaction collection if needed
+            const tokenUsage = new database.TokenUsage({
+                userId: userId,
+                tokensUsed: 0, // No tokens used for purchase
+                action: 'payment_transaction',
+                description: `Payment ${status}: $${amount} for ${tokensPurchased} tokens`,
+                examType: null,
+                subject: null,
+                topic: null,
+                metadata: transaction
+            });
+
+            await tokenUsage.save();
             return transactionId;
         } catch (error) {
             console.error('Error logging transaction:', error);
@@ -190,11 +204,14 @@ class PaymentProcessor {
     // Get transaction history
     async getTransactionHistory(userId, limit = 50) {
         try {
-            const [rows] = await db.execute(
-                'SELECT * FROM payment_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
-                [userId, limit]
-            );
-            return rows;
+            const transactions = await database.TokenUsage.find({
+                userId: userId,
+                action: 'payment_transaction'
+            })
+            .sort({ createdAt: -1 })
+            .limit(limit);
+
+            return transactions.map(t => t.metadata || t);
         } catch (error) {
             console.error('Error getting transaction history:', error);
             throw error;
@@ -215,22 +232,44 @@ class PaymentProcessor {
     // Get payment statistics
     async getPaymentStatistics(userId) {
         try {
-            const [transactionRows] = await db.execute(
-                'SELECT transaction_status, COUNT(*) as count, SUM(amount) as total_amount FROM payment_transactions WHERE user_id = ? GROUP BY transaction_status',
-                [userId]
-            );
+            const transactions = await database.TokenUsage.find({
+                userId: userId,
+                action: 'payment_transaction'
+            });
 
-            const [totalTokens] = await db.execute(
-                'SELECT SUM(tokens_purchased) as total_tokens FROM payment_transactions WHERE user_id = ? AND transaction_status = "completed"',
-                [userId]
-            );
+            const stats = {
+                completed: { count: 0, total_amount: 0 },
+                failed: { count: 0, total_amount: 0 },
+                refunded: { count: 0, total_amount: 0 }
+            };
+
+            let totalTokens = 0;
+
+            transactions.forEach(transaction => {
+                if (transaction.metadata) {
+                    const status = transaction.metadata.transactionStatus;
+                    const amount = transaction.metadata.amount || 0;
+                    const tokens = transaction.metadata.tokensPurchased || 0;
+
+                    if (stats[status]) {
+                        stats[status].count++;
+                        stats[status].total_amount += amount;
+                    }
+
+                    if (status === 'completed') {
+                        totalTokens += tokens;
+                    }
+                }
+            });
 
             return {
-                transactions: transactionRows,
-                total_tokens_purchased: totalTokens[0]?.total_tokens || 0,
-                total_amount_spent: transactionRows
-                    .filter(t => t.transaction_status === 'completed')
-                    .reduce((sum, t) => sum + parseFloat(t.total_amount), 0)
+                transactions: Object.entries(stats).map(([status, data]) => ({
+                    transaction_status: status,
+                    count: data.count,
+                    total_amount: data.total_amount
+                })),
+                total_tokens_purchased: totalTokens,
+                total_amount_spent: stats.completed.total_amount
             };
         } catch (error) {
             console.error('Error getting payment statistics:', error);
@@ -241,36 +280,36 @@ class PaymentProcessor {
     // Refund transaction (for admin use)
     async refundTransaction(transactionId, userId) {
         try {
-            const [transaction] = await db.execute(
-                'SELECT * FROM payment_transactions WHERE id = ? AND user_id = ?',
-                [transactionId, userId]
-            );
+            const transaction = await database.TokenUsage.findOne({
+                userId: userId,
+                action: 'payment_transaction',
+                'metadata.id': transactionId
+            });
 
-            if (transaction.length === 0) {
+            if (!transaction || !transaction.metadata) {
                 throw new Error('Transaction not found');
             }
 
-            if (transaction[0].transaction_status !== 'completed') {
+            if (transaction.metadata.transactionStatus !== 'completed') {
                 throw new Error('Transaction cannot be refunded');
             }
 
             // Update transaction status
-            await db.execute(
-                'UPDATE payment_transactions SET transaction_status = "refunded" WHERE id = ?',
-                [transactionId]
-            );
+            transaction.metadata.transactionStatus = 'refunded';
+            await transaction.save();
 
             // Deduct tokens from user account
-            await tokenManager.deductTokens(userId, 'refund', `Refund for transaction ${transactionId}`, {
+            const tokenManagerInstance = new TokenManager();
+            await tokenManagerInstance.deductTokens(userId, 'refund', `Refund for transaction ${transactionId}`, {
                 transaction_id: transactionId,
-                refund_amount: transaction[0].amount
+                refund_amount: transaction.metadata.amount
             });
 
             return {
                 success: true,
                 transaction_id: transactionId,
-                refunded_amount: transaction[0].amount,
-                tokens_deducted: transaction[0].tokens_purchased
+                refunded_amount: transaction.metadata.amount,
+                tokens_deducted: transaction.metadata.tokensPurchased
             };
 
         } catch (error) {

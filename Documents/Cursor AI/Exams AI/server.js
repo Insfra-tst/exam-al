@@ -6,7 +6,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 
 // Import modules
-const database = require('./database');
+const database = require('./database-mongo');
 const TokenManager = require('./token-manager');
 const PaymentProcessor = require('./payment-processor');
 
@@ -31,20 +31,22 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// CORS configuration for Render.com
+// CORS configuration for Render.com - More permissive for development
 app.use(cors({
     origin: [
-        'https://elaraix.com',
-        'https://www.elaraix.com',
-        'https://exam-analyzer.vercel.app',
-        'https://exam-ai-frontend-blush.vercel.app',
-        'https://exam-ai-frontend-rf52.vercel.app',
+        'https://exam-ai-frontend-three.vercel.app',
+        'https://exam-ai-frontend.vercel.app',
         'http://localhost:3000',
-        'http://localhost:3001'
+        'http://localhost:3001',
+        'http://localhost:3002',
+        'http://localhost:5173',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+        'http://127.0.0.1:3002'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With']
 }));
 
 // Body parsing middleware
@@ -58,7 +60,7 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         environment: process.env.NODE_ENV || 'production',
         version: '1.0.0',
-        database: process.env.DB_NAME,
+        database: 'MongoDB Atlas',
         platform: 'Render.com'
     });
 });
@@ -216,22 +218,22 @@ app.use('*', (req, res) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('🛑 SIGTERM received, shutting down gracefully...');
-    database.closeConnections();
+    database.closeDatabase();
     process.exit(0);
 });
 
 process.on('SIGINT', () => {
     console.log('🛑 SIGINT received, shutting down gracefully...');
-    database.closeConnections();
+    database.closeDatabase();
     process.exit(0);
 });
 
 // Start server
 async function startServer() {
     try {
-        // Initialize database
-        await database.initialize();
-        console.log('✅ Database initialized successfully');
+        // Initialize MongoDB database
+        await database.initializeDatabase();
+        console.log('✅ MongoDB database initialized successfully');
         
         // Start server
         app.listen(PORT, () => {
@@ -239,7 +241,7 @@ async function startServer() {
             console.log('🌍 Environment:', process.env.NODE_ENV || 'production');
             console.log('🔐 CORS enabled for Vercel frontend');
             console.log('🌐 Health check available at /health');
-            console.log('📊 Database:', process.env.DB_NAME);
+            console.log('📊 Database: MongoDB Atlas');
             console.log('🤖 OpenAI API configured');
         });
     } catch (error) {
