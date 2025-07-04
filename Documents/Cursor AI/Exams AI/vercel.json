@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "public/**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "https://exam-analyzer-api.onrender.com/api/$1"
+    },
+    {
+      "src": "/auth/(.*)",
+      "dest": "https://exam-analyzer-api.onrender.com/auth/$1"
+    },
+    {
+      "src": "/payment/(.*)",
+      "dest": "https://exam-analyzer-api.onrender.com/payment/$1"
+    },
+    {
+      "src": "/tokens/(.*)",
+      "dest": "https://exam-analyzer-api.onrender.com/tokens/$1"
+    },
+    {
+      "src": "/health",
+      "dest": "https://exam-analyzer-api.onrender.com/health"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ]
+} 

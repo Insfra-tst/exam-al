@@ -1,0 +1,9 @@
+@echo off
+echo 🧹 Cleaning up existing processes...
+taskkill /f /im node.exe 2>nul || echo No node processes found
+
+echo ⏳ Waiting for processes to terminate...
+timeout /t 2 /nobreak >nul
+
+echo 🚀 Starting test server on port 3004...
+node test-server.js 
